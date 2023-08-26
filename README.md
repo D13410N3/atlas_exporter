@@ -23,7 +23,7 @@
 
 ### Building from Source
 * Clone this repository:
-`git clone https://github.com/yourusername/atlas_probe_exporter.git`
+`git clone https://github.com/D13410N3/atlas_exporter.git`
 * Navigate to the directory and build:
 ```
 cd atlas_probe_exporter
