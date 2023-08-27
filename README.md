@@ -12,6 +12,8 @@
 * `atlas_status`: Atlas Probe Status ID
 * `atlas_status_since`: Atlas Probe Status Since (timestamp)
 * `atlas_total_uptime`: Atlas Probe Total Uptime (in seconds)
+* `atlas_first_connected` Atlas Probe was reg at the first time
+* `atlas_last_connected` Atlas Probe was reg at the last time
 * `atlas_info`: Atlas Probe Info with labels address_v4 and address_v6
 
 ## Prerequisites

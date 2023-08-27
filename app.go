@@ -3,89 +3,85 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/gorilla/mux"
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-type AtlasProbe struct {
-	AddressV4    string `json:"address_v4"`
-	AddressV6    string `json:"address_v6"`
-	Status       Status `json:"status"`
-	StatusSince  int64  `json:"status_since"`
-	TotalUptime  int64  `json:"total_uptime"`
+type AtlasProbeInfo struct {
+	Status       map[string]interface{} `json:"status"`
+	StatusSince  float64                `json:"status_since"`
+	TotalUptime  float64                `json:"total_uptime"`
+	AddressV4    string                 `json:"address_v4"`
+	AddressV6    string                 `json:"address_v6"`
+	FirstConnected float64              `json:"first_connected"`
+	LastConnected  float64              `json:"last_connected"`
 }
 
-type Status struct {
-	ID int `json:"id"`
-}
-
-func fetchMetrics(w http.ResponseWriter, r *http.Request) {
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
+
 	log.Printf("Getting info for atlas id %s", id)
 
 	resp, err := http.Get(fmt.Sprintf("https://atlas.ripe.net/api/v2/probes/%s/", id))
 	if err != nil {
-		log.Printf("Failed to fetch data: %s", err)
-		http.Error(w, "Failed to fetch data", http.StatusInternalServerError)
+		log.Println("Error while fetching data:", err)
+		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Failed to read data: %s", err)
-		http.Error(w, "Failed to read data", http.StatusInternalServerError)
+	var probeInfo AtlasProbeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&probeInfo); err != nil {
+		log.Println("Error while decoding JSON:", err)
+		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 
-	var probe AtlasProbe
-	if err := json.Unmarshal(body, &probe); err != nil {
-		log.Printf("Failed to parse data: %s", err)
-		http.Error(w, "Failed to parse data", http.StatusInternalServerError)
-		return
-	}
-
-	// Create a new registry for this request
-	registry := prometheus.NewRegistry()
-
-	atlasStatus := prometheus.NewGauge(prometheus.GaugeOpts{
+	statusMetric := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "atlas_status",
 		Help: "Atlas Probe Status ID",
 	})
-	registry.MustRegister(atlasStatus)
+	statusMetric.Set(probeInfo.Status["id"].(float64))
 
-	atlasStatusSince := prometheus.NewGauge(prometheus.GaugeOpts{
+	statusSinceMetric := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "atlas_status_since",
 		Help: "Atlas Probe Status Since",
 	})
-	registry.MustRegister(atlasStatusSince)
+	statusSinceMetric.Set(probeInfo.StatusSince)
 
-	atlasTotalUptime := prometheus.NewGauge(prometheus.GaugeOpts{
+	totalUptimeMetric := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "atlas_total_uptime",
 		Help: "Atlas Probe Total Uptime",
 	})
-	registry.MustRegister(atlasTotalUptime)
+	totalUptimeMetric.Set(probeInfo.TotalUptime)
 
-	atlasInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	firstConnectedMetric := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "atlas_first_connected",
+		Help: "Atlas Probe First Connected",
+	})
+	firstConnectedMetric.Set(probeInfo.FirstConnected)
+
+	lastConnectedMetric := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "atlas_last_connected",
+		Help: "Atlas Probe Last Connected",
+	})
+	lastConnectedMetric.Set(probeInfo.LastConnected)
+
+	infoMetric := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "atlas_info",
 		Help: "Atlas Probe Info",
 	}, []string{"address_v4", "address_v6"})
-	registry.MustRegister(atlasInfo)
 
-	// Set the values for the metrics in this request
-	atlasStatus.Set(float64(probe.Status.ID))
-	atlasStatusSince.Set(float64(probe.StatusSince))
-	atlasTotalUptime.Set(float64(probe.TotalUptime))
-	atlasInfo.WithLabelValues(probe.AddressV4, probe.AddressV6).Set(1)
+	infoMetric.WithLabelValues(probeInfo.AddressV4, probeInfo.AddressV6).Set(1)
 
-	// Serve metrics from the local registry
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(statusMetric, statusSinceMetric, totalUptimeMetric, firstConnectedMetric, lastConnectedMetric, infoMetric)
+
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
 }
@@ -97,9 +93,9 @@ func main() {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/metrics/{id:[0-9]+}", fetchMetrics)
+	r.HandleFunc("/metrics/{id:[0-9]+}", metricsHandler)
 	http.Handle("/", r)
 
-	log.Printf("Server is running on %s", listenAddr)
-	http.ListenAndServe(listenAddr, nil)
+	log.Printf("Starting server on %s\n", listenAddr)
+	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
